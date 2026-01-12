@@ -1,0 +1,118 @@
+name: Java Login Showcase 
+
+trigger: none
+pool: Agent_01_Dec2025
+
+stages:
+  - stage: BuildStage
+    displayName: Build Stage
+    jobs:
+      - job: BuildJavaLoginShowcase
+        displayName: Build Java Login Showcase 
+        steps:
+        - task: PowerShell@2
+          displayName: 'Install Maven'
+          inputs:
+            targetType: 'inline'
+            script: |
+              $mavenVersion = "3.9.6"
+              $mavenUrl = "https://archive.apache.org/dist/maven/maven-3/$mavenVersion/binaries/apache-maven-$mavenVersion-bin.zip"
+              $installDir = "C:\maven"
+
+              Write-Host "Downloading Maven..."
+              Invoke-WebRequest -Uri $mavenUrl -OutFile maven.zip
+
+              Write-Host "Extracting Maven..."
+              Expand-Archive maven.zip -DestinationPath $installDir -Force
+
+              $env:MAVEN_HOME = "$installDir\apache-maven-$mavenVersion"
+              $env:PATH = "$env:MAVEN_HOME\bin;$env:PATH"
+
+              mvn -version
+        - task: PowerShell@2
+          displayName: Build with Maven
+          inputs:
+            targetType: 'inline'
+            script: 'mvn clean package'
+            workingDirectory: '$(System.DefaultWorkingDirectory)'
+        - task: PublishPipelineArtifact@1
+          displayName: Publish Artifacts
+          inputs:
+            targetPath: '$(System.DefaultWorkingDirectory)/target'
+            artifact: 'Showcase'
+            publishLocation: 'pipeline'
+
+  - stage: DeployStage
+    displayName: Deploy Stage
+    jobs:
+      - job: DeployJavaLoginShowcase
+        displayName: Deploy Java Login Showcase
+        steps:
+        - task: SSH@0
+          displayName: Install Java & Tomcat via SSH
+          inputs:
+            sshEndpoint: 'vm-access-sc'
+            runOptions: 'inline'
+            inline: |
+              sudo apt-get update
+              sudo apt-get install -y openjdk-17-jdk tomcat10
+              sudo systemctl enable tomcat10
+              sudo systemctl start tomcat10
+            readyTimeout: '20000'
+
+        # - task: SSH@0
+        #   displayName: Install Java & Tomcat on VM
+        #   inputs:
+        #     sshEndpoint: 'vm-access-sc'
+        #     runOptions: 'inline'
+        #     inline: |
+        #       set -e
+        #       export DEBIAN_FRONTEND=noninteractive
+
+        #       echo "Updating packages..."
+        #       sudo apt-get update -y
+
+        #       echo "Installing Java 17..."
+        #       if ! java -version >/dev/null 2>&1; then
+        #         sudo apt-get install -y openjdk-17-jdk
+        #       fi
+
+        #       # IMPORTANT: redirect stderr to stdout
+        #       java -version 2>&1
+
+        #       echo "Installing Tomcat 10..."
+        #       if ! systemctl list-unit-files | grep -q tomcat10; then
+        #         sudo apt-get install -y tomcat10
+        #       fi
+
+        #       echo "Enabling & starting Tomcat..."
+        #       sudo systemctl enable tomcat10
+        #       sudo systemctl start tomcat10
+
+        #       echo "Checking Tomcat status..."
+        #       sudo systemctl is-active tomcat10              
+        - task: DownloadPipelineArtifact@2
+          displayName: Download Artifacts
+          inputs:
+            buildType: 'current'
+            targetPath: '$(System.DefaultWorkingDirectory)'
+        - task: CopyFilesOverSSH@0
+          displayName: Copy Artifacts Over SSH
+          inputs:
+            sshEndpoint: 'vm-access-sc'
+            sourceFolder: '$(System.DefaultWorkingDirectory)/Showcase'
+            contents: '**'
+            targetFolder: '/home/adminuser'
+            readyTimeout: '20000'
+        - task: SSH@0
+          displayName: Deploy WAR to Tomcat Server
+          inputs:
+            sshEndpoint: 'vm-access-sc'
+            runOptions: 'inline'
+            inline: |
+              sudo mv /home/adminuser/JavaLoginShowcase-1.0.0.war /var/lib/tomcat10/webapps/
+              sudo systemctl restart tomcat10
+            readyTimeout: '20000'
+
+
+
